@@ -1,55 +1,87 @@
-
 import streamlit as st
 import pandas as pd
 from datetime import date
+from firebase_config import db
 
 st.set_page_config(
     page_title="College Mess Management",
     page_icon="🍽️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# ---------- SESSION DATA ----------
-if "bookings" not in st.session_state:
-    st.session_state.bookings = []
+# ---------------- FIRESTORE HELPERS ----------------
 
-if "menu" not in st.session_state:
-    st.session_state.menu = [
-        {
-            "Date": str(date.today()),
-            "Meal": "Breakfast",
-            "Menu": "Idli, Sambar, Chutney",
-            "Price": 30
-        },
-        {
-            "Date": str(date.today()),
-            "Meal": "Lunch",
-            "Menu": "Rice, Dal, Vegetables, Salad",
-            "Price": 60
-        },
-        {
-            "Date": str(date.today()),
-            "Meal": "Dinner",
-            "Menu": "Roti, Paneer Curry, Rice",
-            "Price": 70
-        }
-    ]
-
-if "expenses" not in st.session_state:
-    st.session_state.expenses = []
-
-if "attendance" not in st.session_state:
-    st.session_state.attendance = []
-
-if "feedback" not in st.session_state:
-    st.session_state.feedback = []
-
-if "wastage" not in st.session_state:
-    st.session_state.wastage = []
+def load_records(collection):
+    """Read all records from a Firestore collection."""
+    try:
+        documents = db.collection(collection).stream()
+        records = []
+        for document in documents:
+            record = document.to_dict()
+            record["_id"] = document.id
+            records.append(record)
+        return records
+    except Exception as error:
+        st.error(f"Could not load {collection}: {error}")
+        return []
 
 
-# ---------- SIDEBAR ----------
+def save_record(collection, data):
+    """Save one record to Firestore."""
+    try:
+        db.collection(collection).add(data)
+        return True
+    except Exception as error:
+        st.error(f"Could not save data to {collection}: {error}")
+        return False
+
+
+def seed_default_menu():
+    """Add starter menu only if the menu collection is empty."""
+    try:
+        collection = db.collection("menu")
+        if next(collection.limit(1).stream(), None) is None:
+            today = str(date.today())
+            defaults = [
+                {
+                    "Date": today,
+                    "Meal": "Breakfast",
+                    "Menu": "Idli, Sambar, Chutney",
+                    "Price": 30,
+                },
+                {
+                    "Date": today,
+                    "Meal": "Lunch",
+                    "Menu": "Rice, Dal, Vegetables, Salad",
+                    "Price": 60,
+                },
+                {
+                    "Date": today,
+                    "Meal": "Dinner",
+                    "Menu": "Roti, Paneer Curry, Rice",
+                    "Price": 70,
+                },
+            ]
+            for item in defaults:
+                collection.add(item)
+    except Exception as error:
+        st.error(f"Could not initialize menu: {error}")
+
+
+# Seed menu, then load every collection from Firestore.
+seed_default_menu()
+
+menu = load_records("menu")
+bookings = load_records("bookings")
+attendance = load_records("attendance")
+expenses = load_records("expenses")
+feedback = load_records("feedback")
+wastage = load_records("wastage")
+
+
+# ---------------- SIDEBAR ----------------
+
 with st.sidebar:
     st.title("🍽️ Mess Manager")
     st.caption("College Mess Management System")
@@ -66,112 +98,95 @@ with st.sidebar:
             "Expenses",
             "Food Wastage",
             "Feedback",
-            "Reports"
-        ]
+            "Reports",
+        ],
     )
 
     st.divider()
     st.caption("College Mess Management")
-    st.caption("Python + Streamlit + Firebase")
+    st.caption("Python + Streamlit + Firebase Firestore")
 
 
-# ---------- HEADER ----------
+# ---------------- HEADER ----------------
+
 st.title("🍽️ College Mess Management System")
 st.caption("Manage meals, attendance, expenses, and food wastage.")
 st.divider()
 
 
-# ---------- DASHBOARD ----------
+# ---------------- DASHBOARD ----------------
+
 if page == "Dashboard":
     st.subheader("📊 Dashboard Overview")
 
-    total_bookings = len(st.session_state.bookings)
-    total_attendance = len(st.session_state.attendance)
-    total_expenses = sum(
-        float(x["Amount"])
-        for x in st.session_state.expenses
-    )
+    total_expenses = sum(float(x.get("Amount", 0)) for x in expenses)
     total_wastage = sum(
-        float(x["Quantity (kg)"])
-        for x in st.session_state.wastage
+        float(x.get("Quantity (kg)", 0)) for x in wastage
     )
 
     c1, c2, c3, c4 = st.columns(4)
-
-    c1.metric("🍽️ Meal Bookings", total_bookings)
-    c2.metric("✅ Meal Attendance", total_attendance)
+    c1.metric("🍽️ Meal Bookings", len(bookings))
+    c2.metric("✅ Meal Attendance", len(attendance))
     c3.metric("💰 Total Expenses", f"₹{total_expenses:,.2f}")
     c4.metric("♻️ Food Wastage", f"{total_wastage:.1f} kg")
 
     st.divider()
-
     left, right = st.columns(2)
 
     with left:
         st.subheader("Today's Menu")
-
-        menu_df = pd.DataFrame(st.session_state.menu)
-
-        if not menu_df.empty:
+        today_menu = [
+            {k: v for k, v in x.items() if k != "_id"}
+            for x in menu
+            if x.get("Date") == str(date.today())
+        ]
+        if today_menu:
             st.dataframe(
-                menu_df,
+                pd.DataFrame(today_menu),
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
             )
         else:
-            st.info("No menu has been added.")
+            st.info("No menu has been added for today.")
 
     with right:
         st.subheader("Recent Meal Bookings")
-
-        bookings_df = pd.DataFrame(st.session_state.bookings)
-
-        if not bookings_df.empty:
+        if bookings:
+            recent = [
+                {k: v for k, v in x.items() if k != "_id"}
+                for x in bookings[-5:]
+            ]
             st.dataframe(
-                bookings_df.tail(5),
+                pd.DataFrame(recent),
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
             )
         else:
             st.info("No meal bookings yet.")
 
     st.divider()
     st.subheader("📈 Analytics")
-
     chart_left, chart_right = st.columns(2)
 
     with chart_left:
         st.write("Meal Attendance")
-        if st.session_state.attendance:
-            attendance_df = pd.DataFrame(
-                st.session_state.attendance
-            )
-            chart_data = attendance_df.groupby(
-                "Meal"
-            ).size().reset_index(name="Count")
-
-            st.bar_chart(
-                chart_data.set_index("Meal")["Count"]
-            )
+        if attendance:
+            df = pd.DataFrame(attendance)
+            st.bar_chart(df.groupby("Meal").size())
         else:
             st.info("Attendance statistics will appear here.")
 
     with chart_right:
         st.write("Expenses by Category")
-        if st.session_state.expenses:
-            expenses_df = pd.DataFrame(
-                st.session_state.expenses
-            )
-            chart_data = expenses_df.groupby(
-                "Category"
-            )["Amount"].sum()
-
-            st.bar_chart(chart_data)
+        if expenses:
+            df = pd.DataFrame(expenses)
+            st.bar_chart(df.groupby("Category")["Amount"].sum())
         else:
             st.info("Expense statistics will appear here.")
 
 
-# ---------- STUDENT PORTAL ----------
+# ---------------- STUDENT PORTAL ----------------
+
 elif page == "Student Portal":
     st.subheader("🎓 Student Portal")
     st.write("Book meals, record attendance, and submit feedback.")
@@ -187,98 +202,96 @@ elif page == "Student Portal":
             booking_date = st.date_input("Meal Date", value=date.today())
             meal = st.selectbox(
                 "Select Meal",
-                ["Breakfast", "Lunch", "Snacks", "Dinner"]
+                ["Breakfast", "Lunch", "Snacks", "Dinner"],
             )
             quantity = st.number_input(
-                "Number of Meals",
-                min_value=1,
-                max_value=10,
-                value=1
+                "Number of Meals", min_value=1, max_value=10, value=1
             )
-
-            submit = st.form_submit_button(
-                "Book Meal",
-                type="primary"
-            )
+            submit = st.form_submit_button("Book Meal", type="primary")
 
         if submit:
             if not student_name.strip() or not student_id.strip():
                 st.error("Please enter your name and student ID.")
             else:
-                st.session_state.bookings.append({
-                    "Student Name": student_name.strip(),
-                    "Student ID": student_id.strip(),
-                    "Date": str(booking_date),
-                    "Meal": meal,
-                    "Quantity": int(quantity),
-                    "Status": "Booked"
-                })
-                st.success("Meal booking created successfully!")
+                ok = save_record(
+                    "bookings",
+                    {
+                        "Student Name": student_name.strip(),
+                        "Student ID": student_id.strip(),
+                        "Date": str(booking_date),
+                        "Meal": meal,
+                        "Quantity": int(quantity),
+                        "Status": "Booked",
+                    },
+                )
+                if ok:
+                    st.success("Meal booking saved permanently!")
+                    st.rerun()
 
     with tab2:
         with st.form("attendance_form"):
             attendance_name = st.text_input(
-                "Student Name",
-                key="attendance_name"
+                "Student Name", key="attendance_name"
             )
             attendance_id = st.text_input(
-                "Student ID",
-                key="attendance_id"
+                "Student ID", key="attendance_id"
             )
             attendance_meal = st.selectbox(
                 "Meal Collected",
                 ["Breakfast", "Lunch", "Snacks", "Dinner"],
-                key="attendance_meal"
+                key="attendance_meal",
             )
-
-            mark_attendance = st.form_submit_button(
-                "Record Attendance"
-            )
+            mark_attendance = st.form_submit_button("Record Attendance")
 
         if mark_attendance:
             if not attendance_name.strip() or not attendance_id.strip():
                 st.error("Please enter your name and student ID.")
             else:
-                st.session_state.attendance.append({
-                    "Student Name": attendance_name.strip(),
-                    "Student ID": attendance_id.strip(),
-                    "Date": str(date.today()),
-                    "Meal": attendance_meal
-                })
-                st.success("Attendance recorded.")
+                ok = save_record(
+                    "attendance",
+                    {
+                        "Student Name": attendance_name.strip(),
+                        "Student ID": attendance_id.strip(),
+                        "Date": str(date.today()),
+                        "Meal": attendance_meal,
+                    },
+                )
+                if ok:
+                    st.success("Attendance saved permanently!")
+                    st.rerun()
 
     with tab3:
         with st.form("feedback_form"):
-            feedback_name = st.text_input(
-                "Student Name",
-                key="feedback_name"
-            )
+            feedback_name = st.text_input("Student Name", key="feedback_name")
             rating = st.slider("Food Rating", 1, 5, 4)
             comments = st.text_area("Your Feedback")
-
-            feedback_submit = st.form_submit_button(
-                "Submit Feedback"
-            )
+            feedback_submit = st.form_submit_button("Submit Feedback")
 
         if feedback_submit:
             if not feedback_name.strip() or not comments.strip():
                 st.error("Please enter your name and feedback.")
             else:
-                st.session_state.feedback.append({
-                    "Student Name": feedback_name.strip(),
-                    "Date": str(date.today()),
-                    "Rating": int(rating),
-                    "Comments": comments.strip()
-                })
-                st.success("Thank you for your feedback!")
+                ok = save_record(
+                    "feedback",
+                    {
+                        "Student Name": feedback_name.strip(),
+                        "Date": str(date.today()),
+                        "Rating": int(rating),
+                        "Comments": comments.strip(),
+                    },
+                )
+                if ok:
+                    st.success("Feedback saved permanently!")
+                    st.rerun()
 
 
-# ---------- ADMIN PORTAL ----------
+# ---------------- ADMIN PORTAL ----------------
+
 elif page == "Admin Portal":
     st.subheader("🛠️ Admin Portal")
     st.warning(
-        "This is the initial interface preview. "
-        "Secure admin authentication will be added in the Firebase integration step."
+        "Admin authentication is not configured yet. "
+        "Do not publish this app for unrestricted use until access is secured."
     )
 
     tab1, tab2, tab3 = st.tabs(
@@ -288,44 +301,42 @@ elif page == "Admin Portal":
     with tab1:
         with st.form("menu_form"):
             menu_date = st.date_input(
-                "Menu Date",
-                value=date.today(),
-                key="menu_date"
+                "Menu Date", value=date.today(), key="menu_date"
             )
             meal_type = st.selectbox(
                 "Meal Type",
                 ["Breakfast", "Lunch", "Snacks", "Dinner"],
-                key="menu_type"
+                key="menu_type",
             )
             menu_items = st.text_area(
-                "Food Items",
-                placeholder="Rice, dal, vegetables..."
+                "Food Items", placeholder="Rice, dal, vegetables..."
             )
             menu_price = st.number_input(
-                "Price per Meal (₹)",
-                min_value=0,
-                value=50
+                "Price per Meal (₹)", min_value=0, value=50
             )
-
             menu_submit = st.form_submit_button("Add Menu")
 
         if menu_submit:
             if not menu_items.strip():
                 st.error("Please enter the food items.")
             else:
-                st.session_state.menu.append({
-                    "Date": str(menu_date),
-                    "Meal": meal_type,
-                    "Menu": menu_items.strip(),
-                    "Price": int(menu_price)
-                })
-                st.success("Menu added successfully!")
+                ok = save_record(
+                    "menu",
+                    {
+                        "Date": str(menu_date),
+                        "Meal": meal_type,
+                        "Menu": menu_items.strip(),
+                        "Price": int(menu_price),
+                    },
+                )
+                if ok:
+                    st.success("Menu saved permanently!")
+                    st.rerun()
 
     with tab2:
         with st.form("expense_form"):
             expense_date = st.date_input(
-                "Expense Date",
-                value=date.today()
+                "Expense Date", value=date.today()
             )
             category = st.selectbox(
                 "Expense Category",
@@ -335,41 +346,40 @@ elif page == "Admin Portal":
                     "Staff",
                     "Maintenance",
                     "Electricity",
-                    "Other"
-                ]
+                    "Other",
+                ],
             )
             description = st.text_input("Description")
             amount = st.number_input(
-                "Amount (₹)",
-                min_value=0.0,
-                step=100.0
+                "Amount (₹)", min_value=0.0, step=100.0
             )
-
             expense_submit = st.form_submit_button("Save Expense")
 
         if expense_submit:
             if not description.strip() or amount <= 0:
                 st.error("Enter a description and an amount greater than zero.")
             else:
-                st.session_state.expenses.append({
-                    "Date": str(expense_date),
-                    "Category": category,
-                    "Description": description.strip(),
-                    "Amount": float(amount)
-                })
-                st.success("Expense saved successfully!")
+                ok = save_record(
+                    "expenses",
+                    {
+                        "Date": str(expense_date),
+                        "Category": category,
+                        "Description": description.strip(),
+                        "Amount": float(amount),
+                    },
+                )
+                if ok:
+                    st.success("Expense saved permanently!")
+                    st.rerun()
 
     with tab3:
         with st.form("wastage_form"):
             waste_date = st.date_input(
-                "Wastage Date",
-                value=date.today()
+                "Wastage Date", value=date.today()
             )
             food_name = st.text_input("Food Item")
             waste_quantity = st.number_input(
-                "Wasted Quantity (kg)",
-                min_value=0.0,
-                step=0.5
+                "Wasted Quantity (kg)", min_value=0.0, step=0.5
             )
             reason = st.selectbox(
                 "Reason",
@@ -378,50 +388,44 @@ elif page == "Admin Portal":
                     "Spoilage",
                     "Preparation Waste",
                     "Plate Waste",
-                    "Other"
-                ]
+                    "Other",
+                ],
             )
-
-            waste_submit = st.form_submit_button(
-                "Save Wastage Record"
-            )
+            waste_submit = st.form_submit_button("Save Wastage Record")
 
         if waste_submit:
             if not food_name.strip() or waste_quantity <= 0:
                 st.error("Enter a food item and quantity greater than zero.")
             else:
-                st.session_state.wastage.append({
-                    "Date": str(waste_date),
-                    "Food": food_name.strip(),
-                    "Quantity (kg)": float(waste_quantity),
-                    "Reason": reason
-                })
-                st.success("Food wastage record saved.")
+                ok = save_record(
+                    "wastage",
+                    {
+                        "Date": str(waste_date),
+                        "Food": food_name.strip(),
+                        "Quantity (kg)": float(waste_quantity),
+                        "Reason": reason,
+                    },
+                )
+                if ok:
+                    st.success("Food wastage saved permanently!")
+                    st.rerun()
 
 
-# ---------- MEAL MENU ----------
+# ---------------- MEAL MENU ----------------
+
 elif page == "Meal Menu":
     st.subheader("🍛 Meal Menu")
-
-    menu_df = pd.DataFrame(st.session_state.menu)
+    menu_df = pd.DataFrame(
+        [{k: v for k, v in x.items() if k != "_id"} for x in menu]
+    )
 
     if not menu_df.empty:
         selected_date = st.date_input(
-            "Filter by date",
-            value=date.today(),
-            key="menu_filter_date"
+            "Filter by date", value=date.today(), key="menu_filter_date"
         )
-
-        filtered = menu_df[
-            menu_df["Date"] == str(selected_date)
-        ]
-
+        filtered = menu_df[menu_df["Date"] == str(selected_date)]
         if not filtered.empty:
-            st.dataframe(
-                filtered,
-                use_container_width=True,
-                hide_index=True
-            )
+            st.dataframe(filtered, use_container_width=True, hide_index=True)
         else:
             st.info("No menu is available for this date.")
 
@@ -429,123 +433,122 @@ elif page == "Meal Menu":
             "Download Menu CSV",
             data=menu_df.to_csv(index=False).encode("utf-8"),
             file_name="mess_menu.csv",
-            mime="text/csv"
+            mime="text/csv",
         )
     else:
         st.info("No menu available.")
 
 
-# ---------- MEAL BOOKINGS ----------
+# ---------------- MEAL BOOKINGS ----------------
+
 elif page == "Meal Bookings":
     st.subheader("📋 Meal Bookings")
-
-    bookings_df = pd.DataFrame(st.session_state.bookings)
-
-    if not bookings_df.empty:
-        st.dataframe(
-            bookings_df,
-            use_container_width=True,
-            hide_index=True
-        )
-
+    df = pd.DataFrame(
+        [{k: v for k, v in x.items() if k != "_id"} for x in bookings]
+    )
+    if not df.empty:
+        st.dataframe(df, use_container_width=True, hide_index=True)
         st.download_button(
             "Download Bookings CSV",
-            data=bookings_df.to_csv(index=False).encode("utf-8"),
+            data=df.to_csv(index=False).encode("utf-8"),
             file_name="meal_bookings.csv",
-            mime="text/csv"
+            mime="text/csv",
         )
     else:
         st.info("No meal bookings available.")
 
 
-# ---------- EXPENSES ----------
+# ---------------- EXPENSES ----------------
+
 elif page == "Expenses":
     st.subheader("💰 Mess Expenses")
-
-    expenses_df = pd.DataFrame(st.session_state.expenses)
-
-    if not expenses_df.empty:
-        st.metric(
-            "Total Expenses",
-            f"₹{expenses_df['Amount'].sum():,.2f}"
-        )
-        st.dataframe(
-            expenses_df,
-            use_container_width=True,
-            hide_index=True
+    df = pd.DataFrame(
+        [{k: v for k, v in x.items() if k != "_id"} for x in expenses]
+    )
+    if not df.empty:
+        st.metric("Total Expenses", f"₹{df['Amount'].sum():,.2f}")
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download Expenses CSV",
+            data=df.to_csv(index=False).encode("utf-8"),
+            file_name="expenses.csv",
+            mime="text/csv",
         )
     else:
         st.info("No expenses recorded.")
 
 
-# ---------- FOOD WASTAGE ----------
+# ---------------- FOOD WASTAGE ----------------
+
 elif page == "Food Wastage":
     st.subheader("♻️ Food Wastage Management")
-
-    waste_df = pd.DataFrame(st.session_state.wastage)
-
-    if not waste_df.empty:
-        st.metric(
-            "Total Food Wastage",
-            f"{waste_df['Quantity (kg)'].sum():.1f} kg"
-        )
-        st.dataframe(
-            waste_df,
-            use_container_width=True,
-            hide_index=True
-        )
-
-        st.bar_chart(
-            waste_df.groupby("Food")["Quantity (kg)"].sum()
+    df = pd.DataFrame(
+        [{k: v for k, v in x.items() if k != "_id"} for x in wastage]
+    )
+    if not df.empty:
+        st.metric("Total Food Wastage", f"{df['Quantity (kg)'].sum():.1f} kg")
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.bar_chart(df.groupby("Food")["Quantity (kg)"].sum())
+        st.download_button(
+            "Download Wastage CSV",
+            data=df.to_csv(index=False).encode("utf-8"),
+            file_name="food_wastage.csv",
+            mime="text/csv",
         )
     else:
         st.info("No food wastage records available.")
 
 
-# ---------- FEEDBACK ----------
+# ---------------- FEEDBACK ----------------
+
 elif page == "Feedback":
     st.subheader("⭐ Student Feedback")
-
-    feedback_df = pd.DataFrame(st.session_state.feedback)
-
-    if not feedback_df.empty:
-        average_rating = feedback_df["Rating"].mean()
-        st.metric("Average Food Rating", f"{average_rating:.1f} / 5")
-        st.dataframe(
-            feedback_df,
-            use_container_width=True,
-            hide_index=True
+    df = pd.DataFrame(
+        [{k: v for k, v in x.items() if k != "_id"} for x in feedback]
+    )
+    if not df.empty:
+        st.metric("Average Food Rating", f"{df['Rating'].mean():.1f} / 5")
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download Feedback CSV",
+            data=df.to_csv(index=False).encode("utf-8"),
+            file_name="feedback.csv",
+            mime="text/csv",
         )
     else:
         st.info("No feedback submitted yet.")
 
 
-# ---------- REPORTS ----------
+# ---------------- REPORTS ----------------
+
 elif page == "Reports":
     st.subheader("📑 Reports and Downloads")
 
     report_options = {
-        "Meal Menu": st.session_state.menu,
-        "Meal Bookings": st.session_state.bookings,
-        "Meal Attendance": st.session_state.attendance,
-        "Expenses": st.session_state.expenses,
-        "Feedback": st.session_state.feedback,
-        "Food Wastage": st.session_state.wastage
+        "Meal Menu": menu,
+        "Meal Bookings": bookings,
+        "Meal Attendance": attendance,
+        "Expenses": expenses,
+        "Feedback": feedback,
+        "Food Wastage": wastage,
     }
 
     for report_name, records in report_options.items():
-        if records:
-            report_df = pd.DataFrame(records)
-
+        clean_records = [
+            {k: v for k, v in record.items() if k != "_id"}
+            for record in records
+        ]
+        if clean_records:
+            df = pd.DataFrame(clean_records)
             st.download_button(
                 f"Download {report_name} CSV",
-                data=report_df.to_csv(index=False).encode("utf-8"),
+                data=df.to_csv(index=False).encode("utf-8"),
                 file_name=report_name.lower().replace(" ", "_") + ".csv",
                 mime="text/csv",
-                key="report_" + report_name
+                key="report_" + report_name,
             )
         else:
             st.write(f"{report_name}: No data yet.")
 
 st.divider()
-st.caption("College Mess Management System | Python + Streamlit")
+st.caption("College Mess Management System | Python + Streamlit + Firestore")
