@@ -1,4 +1,4 @@
-```python
+
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -549,4 +549,3 @@ elif page == "Reports":
 
 st.divider()
 st.caption("College Mess Management System | Python + Streamlit")
-```
